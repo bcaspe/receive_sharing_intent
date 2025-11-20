@@ -12,7 +12,7 @@ class SharedMediaFile {
   final int? duration;
 
   /// Shared media type
-  final SharedMediaType type;
+  final SharedMediaType? type;
 
   /// Mime type of the file.
   /// i.e. image/jpeg, video/mp4, text/plain
@@ -23,7 +23,7 @@ class SharedMediaFile {
 
   SharedMediaFile({
     this.path,
-    required this.type,
+    this.type,
     this.thumbnail,
     this.duration,
     this.mimeType,
@@ -34,7 +34,7 @@ class SharedMediaFile {
       : path = json['path'] as String?,  // Explicitly cast to nullable
         thumbnail = json['thumbnail'] as String?,
         duration = json['duration'] as int?,
-        type = SharedMediaType.fromValue(json['type']),
+        type = SharedMediaType.fromValue(json['type'] as String?),
         mimeType = json['mimeType'] as String?,
         message = json['message'] as String?;
 
@@ -63,7 +63,13 @@ enum SharedMediaType {
 
   const SharedMediaType(this.value);
 
-  static SharedMediaType fromValue(String value) {
-    return SharedMediaType.values.firstWhere((e) => e.value == value);
+  static SharedMediaType fromValue(String? value) {
+  if (value == null) {
+    return SharedMediaType.file; // Default fallback
   }
+  return SharedMediaType.values.firstWhere(
+    (e) => e.value == value,
+    orElse: () => SharedMediaType.file, // Fallback if value doesn't match
+  );
+}
 }
