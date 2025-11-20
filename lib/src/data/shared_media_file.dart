@@ -43,7 +43,7 @@ class SharedMediaFile {
       'path': path,
       'thumbnail': thumbnail,
       'duration': duration,
-      'type': type.value,
+      'type': type.value?,
       'mimeType': mimeType,
       'message': message,
     };
