@@ -53,34 +53,40 @@ Stream<List<SharedMediaFile>> getMediaStream() {
     _streamMedia = stream.transform<List<SharedMediaFile>>(
       StreamTransformer<String?, List<SharedMediaFile>>.fromHandlers(
         handleData: (data, sink) {
-          if (data == null) {
-            sink.add(<SharedMediaFile>[]);
-          } else {
-            try {
-              final encoded = jsonDecode(data);
-              final List<SharedMediaFile> files = [];
-              
-              for (final fileMap in encoded) {
-                try {
-                  // Skip entries without a path (they only have URI, which causes the crash)
-                  if (fileMap['path'] == null || 
-                      fileMap['path'].toString().trim().isEmpty) {
-                    continue; // Skip this entry
-                  }
-                  files.add(SharedMediaFile.fromMap(fileMap));
-                } catch (e) {
-                  // If fromMap fails for any reason, skip this entry
-                  continue;
-                }
-              }
-              
-              sink.add(files);
-            } catch (e) {
-              // If entire payload fails to decode, return empty list
-              sink.add(<SharedMediaFile>[]);
-            }
-          }
-        },
+  if (data == null) {
+    sink.add(<SharedMediaFile>[]);
+    return;
+  }
+  
+  try {
+    final encoded = jsonDecode(data);
+    final List<SharedMediaFile> files = [];
+    
+    for (final fileMap in encoded) {
+      try {
+        // Skip if type is missing (required field)
+        if (fileMap['type'] == null) {
+          continue;
+        }
+        
+        // Try to create the file
+        final file = SharedMediaFile.fromMap(fileMap);
+        
+        // Only add if path exists (since you need it for your use case)
+        if (file.path != null && file.path!.isNotEmpty) {
+          files.add(file);
+        }
+      } catch (e) {
+        // Skip entries that fail to parse
+        continue;
+      }
+    }
+    
+    sink.add(files);
+  } catch (e) {
+    sink.add(<SharedMediaFile>[]);
+  }
+},
         handleError: (error, stackTrace, sink) {
           // Handle stream errors gracefully
           sink.add(<SharedMediaFile>[]);
