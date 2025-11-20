@@ -3,7 +3,7 @@ part of listen_sharing_intent;
 class SharedMediaFile {
   /// Shared file path, url or the text
   /// NOTE. All files are copied to a temp cache folder
-  final String path;
+  final String? path;
 
   /// Video thumbnail
   final String? thumbnail;
@@ -22,7 +22,7 @@ class SharedMediaFile {
   final String? message;
 
   SharedMediaFile({
-    required this.path,
+    this.path,
     required this.type,
     this.thumbnail,
     this.duration,
@@ -31,12 +31,12 @@ class SharedMediaFile {
   });
 
   SharedMediaFile.fromMap(Map<String, dynamic> json)
-      : path = json['path'],
-        thumbnail = json['thumbnail'],
-        duration = json['duration'],
+      : path = json['path'] as String?,  // Explicitly cast to nullable
+        thumbnail = json['thumbnail'] as String?,
+        duration = json['duration'] as int?,
         type = SharedMediaType.fromValue(json['type']),
-        mimeType = json['mimeType'],
-        message = json['message'];
+        mimeType = json['mimeType'] as String?,
+        message = json['message'] as String?;
 
   Map<String, dynamic> toMap() {
     return {
