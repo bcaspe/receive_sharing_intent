@@ -23,7 +23,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.net.URLConnection
+import kotlin.io.copyTo
 
 private const val MESSAGES_CHANNEL = "receive_sharing_intent/messages"
 private const val EVENTS_CHANNEL_MEDIA = "receive_sharing_intent/events-media"
@@ -152,7 +154,11 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
 
     // content can only be uri or string
     private fun toJsonObject(uri: Uri?, text: String?, mimeType: String?): JSONObject? {
-        val path = uri?.let { FileDirectory.getAbsolutePath(applicationContext, it) }
+        val path = uri?.let { 
+            // First try to get path directly
+            FileDirectory.getAbsolutePath(applicationContext, it) 
+                ?: copyUriToTempFile(it) // If that fails, copy to temp file
+        }
         val specifiedMimeType = text?.let { "text" } ?: mimeType
         val mType = specifiedMimeType ?: path?.let { URLConnection.guessContentTypeFromName(path) }
         val type = MediaType.fromMimeType(mType)
@@ -182,6 +188,54 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
         }
         bitmap.recycle()
         return Pair(targetFile.path, duration)
+    }
+
+    // Copy content URI to temp file and return the path
+    private fun copyUriToTempFile(uri: Uri): String? {
+        return try {
+            val contentResolver = applicationContext.contentResolver
+            val inputStream = contentResolver.openInputStream(uri) ?: return null
+            
+            // Get file name from URI or use a default
+            val fileName = getFileName(uri) ?: "shared_file_${System.currentTimeMillis()}"
+            val tempFile = File(applicationContext.cacheDir, fileName)
+            
+            FileOutputStream(tempFile).use { output ->
+                inputStream.copyTo(output)
+            }
+            
+            tempFile.absolutePath
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    // Helper to get filename from URI
+    private fun getFileName(uri: Uri): String? {
+        var result: String? = null
+        if (uri.scheme == "content") {
+            val cursor = applicationContext.contentResolver.query(uri, null, null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0) {
+                        result = it.getString(nameIndex)
+                    }
+                }
+            }
+        }
+        if (result == null) {
+            result = uri.path?.let { 
+                val cut = it.lastIndexOf('/')
+                if (cut != -1) {
+                    it.substring(cut + 1)
+                } else {
+                    null
+                }
+            }
+        }
+        return result
     }
 
     enum class MediaType(val value: String) {
