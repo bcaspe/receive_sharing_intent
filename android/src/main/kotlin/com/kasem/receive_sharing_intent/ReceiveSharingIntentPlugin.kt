@@ -9,6 +9,7 @@ import android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
 import android.net.Uri
 import android.os.Parcelable
 import android.os.Build
+import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -34,7 +35,7 @@ private const val EVENTS_CHANNEL_TEXT = "receive_sharing_intent/events-text"
 class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandler,
         EventChannel.StreamHandler, NewIntentListener {
 
-    private var initialMedia: JSONArray? = null
+    private var initialIntent: Intent? = null
     private var latestMedia: JSONArray? = null
 
     private var eventSinkMedia: EventChannel.EventSink? = null
@@ -71,9 +72,16 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
 
     override fun onMethodCall(call: MethodCall, result: Result) {
         when (call.method) {
-            "getInitialMedia" -> result.success(initialMedia?.toString())
+            "getInitialMedia" -> {
+                val intent = initialIntent
+                val media = intent?.let { processedIntent ->
+                    getMediaUris(processedIntent)
+                }
+                initialIntent = null
+                result.success(media?.toString())
+            }
             "reset" -> {
-                initialMedia = null
+                initialIntent = null
                 latestMedia = null
                 result.success(null)
             }
@@ -91,9 +99,10 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                             || intent.action == Intent.ACTION_SEND_MULTIPLE) -> {
 
                 val value = getMediaUris(intent)
-                if (initial) initialMedia = value
-                latestMedia = value
-                eventSinkMedia?.success(latestMedia?.toString())
+                if (!initial) {
+                    latestMedia = value
+                    eventSinkMedia?.success(latestMedia?.toString())
+                }
             }
 
             // Opening URL
@@ -103,9 +112,10 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                                 .put("path", intent.dataString)
                                 .put("type", MediaType.URL.value))
                 )
-                if (initial) initialMedia = value
-                latestMedia = value
-                eventSinkMedia?.success(latestMedia?.toString())
+                if (!initial) {
+                    latestMedia = value
+                    eventSinkMedia?.success(latestMedia?.toString())
+                }
             }
 
             // Opening email contact
@@ -116,9 +126,10 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                                 .put("path", intent.data?.schemeSpecificPart)
                                 .put("type", MediaType.MAILTO.value))
                 )
-                if (initial) initialMedia = value
-                latestMedia = value
-                eventSinkMedia?.success(latestMedia?.toString())
+                if (!initial) {
+                    latestMedia = value
+                    eventSinkMedia?.success(latestMedia?.toString())
+                }
             }
         }
     }
@@ -192,6 +203,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
 
     // Copy content URI to temp file and return the path
     private fun copyUriToTempFile(uri: Uri): String? {
+        Log.d("SharingIntent", "copyUriToTempFile uri=$uri")
         return try {
             val contentResolver = applicationContext.contentResolver
             val inputStream = contentResolver.openInputStream(uri) ?: return null
@@ -199,7 +211,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
             // Get file name from URI or use a default
             val fileName = getFileName(uri) ?: "shared_file_${System.currentTimeMillis()}"
             val tempFile = File(applicationContext.cacheDir, fileName)
-            
+            Log.d("SharingIntent", "copyUriToTempFile created ${tempFile.absolutePath}")
             FileOutputStream(tempFile).use { output ->
                 inputStream.copyTo(output)
             }
@@ -256,7 +268,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         this.binding = binding
         binding.addOnNewIntentListener(this)
-        handleIntent(binding.activity.intent, true)
+        initialIntent = binding.activity.intent
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
