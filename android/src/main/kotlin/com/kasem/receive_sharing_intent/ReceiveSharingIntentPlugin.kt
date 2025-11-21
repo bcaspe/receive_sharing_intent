@@ -23,6 +23,7 @@ import io.flutter.plugin.common.PluginRegistry.NewIntentListener
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.URLConnection
@@ -167,8 +168,18 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
     private fun toJsonObject(uri: Uri?, text: String?, mimeType: String?): JSONObject? {
         val path = uri?.let { 
             // First try to get path directly
-            FileDirectory.getAbsolutePath(applicationContext, it) 
-                ?: copyUriToTempFile(it) // If that fails, copy to temp file
+            val directPath = FileDirectory.getAbsolutePath(applicationContext, it)
+            if (directPath != null) {
+                // If path is in /sdcard, copy to cache for Android 13+ compatibility
+                if (directPath.startsWith("/sdcard/") || directPath.startsWith("/storage/emulated/")) {
+                    copyFileToCache(directPath) ?: directPath
+                } else {
+                    directPath
+                }
+            } else {
+                // If that fails, try copying URI to temp file (for content:// URIs)
+                copyUriToTempFile(it)
+            }
         }
         val specifiedMimeType = text?.let { "text" } ?: mimeType
         val mType = specifiedMimeType ?: path?.let { URLConnection.guessContentTypeFromName(path) }
@@ -199,6 +210,35 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
         }
         bitmap.recycle()
         return Pair(targetFile.path, duration)
+    }
+
+    // Copy file from external storage to app cache directory (for Android 13+ compatibility)
+    private fun copyFileToCache(filePath: String): String? {
+        Log.d("SharingIntent", "copyFileToCache filePath=$filePath")
+        return try {
+            val sourceFile = File(filePath)
+            if (!sourceFile.exists()) {
+                Log.d("SharingIntent", "Source file does not exist: $filePath")
+                return null
+            }
+            
+            val fileName = sourceFile.name
+            val tempFile = File(applicationContext.cacheDir, fileName)
+            Log.d("SharingIntent", "copyFileToCache copying to ${tempFile.absolutePath}")
+            
+            FileInputStream(sourceFile).use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            
+            Log.d("SharingIntent", "copyFileToCache success: ${tempFile.absolutePath}")
+            tempFile.absolutePath
+        } catch (e: Exception) {
+            Log.e("SharingIntent", "copyFileToCache error", e)
+            e.printStackTrace()
+            null
+        }
     }
 
     // Copy content URI to temp file and return the path
