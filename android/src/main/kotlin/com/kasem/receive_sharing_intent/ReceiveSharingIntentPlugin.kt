@@ -7,6 +7,8 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
 import android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.os.Parcelable
 import android.os.Build
 import android.util.Log
@@ -27,6 +29,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.URLConnection
+import java.util.concurrent.Executors
 import kotlin.io.copyTo
 
 private const val MESSAGES_CHANNEL = "receive_sharing_intent/messages"
@@ -75,11 +78,31 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
         when (call.method) {
             "getInitialMedia" -> {
                 val intent = initialIntent
-                val media = intent?.let { processedIntent ->
-                    getMediaUris(processedIntent)
-                }
                 initialIntent = null
-                result.success(media?.toString())
+                
+                if (intent == null) {
+                    result.success(null)
+                    return
+                }
+                
+                val mainHandler = Handler(Looper.getMainLooper())
+                
+                // Process in background thread to avoid blocking UI
+                Executors.newSingleThreadExecutor().execute {
+                    try {
+                        val media = getMediaUris(intent)
+                        // Post result back to main thread
+                        mainHandler.post {
+                            result.success(media?.toString())
+                        }
+                    } catch (e: Exception) {
+                        Log.e("SharingIntent", "Error processing initial media", e)
+                        // Post error back to main thread
+                        mainHandler.post {
+                            result.error("PROCESSING_ERROR", "Failed to process initial media: ${e.message}", null)
+                        }
+                    }
+                }
             }
             "reset" -> {
                 initialIntent = null
