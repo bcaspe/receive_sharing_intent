@@ -331,7 +331,10 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         this.binding = binding
         binding.addOnNewIntentListener(this)
-        initialIntent = binding.activity.intent
+        binding.activity.intent?.let {
+            initialIntent = it
+            handleIntent(it, true)  // Process initial intent early
+        }
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -349,7 +352,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
 
     override fun onNewIntent(intent: Intent): Boolean {
         handleIntent(intent, false)
-        return false
+        return true  // Tell Android we handled the intent
     }
 
     inline fun <reified T : Parcelable> Intent.parcelable(key: String): T? = when {
