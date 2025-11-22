@@ -67,11 +67,14 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                 val intent = initialIntent
                 initialIntent = null
 
+                Log.d(TAG, "getInitialMedia: called, intent=${intent != null}")
                 if (intent == null) {
+                    Log.d(TAG, "getInitialMedia: no intent, returning null")
                     result.success(null)
                     return
                 }
 
+                Log.d(TAG, "getInitialMedia: processing intent on background thread")
                 executor.execute {
                     try {
                         val media = getMedia(intent)
@@ -96,9 +99,12 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
     }
 
     private fun handleIntent(intent: Intent, isInitial: Boolean) {
+        Log.d(TAG, "handleIntent: isInitial=$isInitial, action=${intent.action}, type=${intent.type}")
         executor.execute {
             try {
+                Log.d(TAG, "handleIntent: processing on background thread")
                 val media = getMedia(intent)
+                Log.d(TAG, "handleIntent: got media=${media != null}")
 
                 if (!isInitial && media != null) {
                     latestMedia = media
@@ -276,8 +282,11 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
         binding.addOnNewIntentListener(this)
 
         binding.activity.intent?.let {
+            Log.d(TAG, "onAttachedToActivity: intent action=${it.action}, type=${it.type}, data=${it.data}")
             initialIntent = it
             handleIntent(it, true)
+        } ?: run {
+            Log.d(TAG, "onAttachedToActivity: no intent found")
         }
     }
 
