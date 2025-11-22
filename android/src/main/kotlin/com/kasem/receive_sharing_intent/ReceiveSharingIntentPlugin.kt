@@ -7,7 +7,10 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
 import android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
 import android.net.Uri
-import android.os.*
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.Parcelable
 import android.provider.OpenableColumns
 import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -16,7 +19,9 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.*
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.*
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.net.URLConnection
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -27,14 +32,17 @@ private const val EVENTS_CHANNEL_MEDIA = "receive_sharing_intent/events-media"
 private const val EVENTS_CHANNEL_TEXT = "receive_sharing_intent/events-text"
 
 class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandler,
-    EventChannel.StreamHandler, PluginRegistry.NewIntentListener {
+    PluginRegistry.NewIntentListener {
 
     private lateinit var context: Context
     private var binding: ActivityPluginBinding? = null
 
     private var initialIntent: Intent? = null
     private var latestMedia: JSONArray? = null
+
+    // Separate sinks to prevent collision
     private var eventSinkMedia: EventChannel.EventSink? = null
+    private var eventSinkText: EventChannel.EventSink? = null
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -44,21 +52,31 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
         setupChannels(binding.binaryMessenger)
     }
 
-    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {}
+    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        // Cleanup if needed
+    }
 
     private fun setupChannels(messenger: BinaryMessenger) {
         MethodChannel(messenger, MESSAGES_CHANNEL).setMethodCallHandler(this)
-        EventChannel(messenger, EVENTS_CHANNEL_MEDIA).setStreamHandler(this)
-        EventChannel(messenger, EVENTS_CHANNEL_TEXT).setStreamHandler(this)
-    }
 
-    override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
-        eventSinkMedia = events
-        latestMedia?.let { eventSinkMedia?.success(it.toString()) }
-    }
+        EventChannel(messenger, EVENTS_CHANNEL_MEDIA).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                eventSinkMedia = events
+                latestMedia?.let { events.success(it.toString()) }
+            }
+            override fun onCancel(arguments: Any?) {
+                eventSinkMedia = null
+            }
+        })
 
-    override fun onCancel(arguments: Any?) {
-        eventSinkMedia = null
+        EventChannel(messenger, EVENTS_CHANNEL_TEXT).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                eventSinkText = events
+            }
+            override fun onCancel(arguments: Any?) {
+                eventSinkText = null
+            }
+        })
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -67,14 +85,11 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                 val intent = initialIntent
                 initialIntent = null
 
-                Log.d(TAG, "getInitialMedia: called, intent=${intent != null}")
                 if (intent == null) {
-                    Log.d(TAG, "getInitialMedia: no intent, returning null")
                     result.success(null)
                     return
                 }
 
-                Log.d(TAG, "getInitialMedia: processing intent on background thread")
                 executor.execute {
                     try {
                         val media = getMedia(intent)
@@ -99,13 +114,9 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
     }
 
     private fun handleIntent(intent: Intent, isInitial: Boolean) {
-        Log.d(TAG, "handleIntent: isInitial=$isInitial, action=${intent.action}, type=${intent.type}")
         executor.execute {
             try {
-                Log.d(TAG, "handleIntent: processing on background thread")
                 val media = getMedia(intent)
-                Log.d(TAG, "handleIntent: got media=${media != null}")
-
                 if (!isInitial && media != null) {
                     latestMedia = media
                     mainHandler.post {
@@ -128,12 +139,10 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
 
         return when (intent.action) {
             Intent.ACTION_VIEW -> {
-                // If it has a type, treat as media file; otherwise treat as URL
                 if (intent.type != null) {
                     val uri = intent.data
                     toJson(uri, null, intent.type)?.let { JSONArray(listOf(it)) }
                 } else {
-                    // It's a URL, not a media file
                     JSONArray(
                         listOf(JSONObject()
                             .put("path", intent.dataString)
@@ -141,13 +150,11 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                     )
                 }
             }
-
             Intent.ACTION_SEND -> {
                 val uri = intent.parcelable<Uri>(Intent.EXTRA_STREAM)
                 val text = intent.getStringExtra(Intent.EXTRA_TEXT)
                 toJson(uri, text, intent.type)?.let { JSONArray(listOf(it)) }
             }
-
             Intent.ACTION_SEND_MULTIPLE -> {
                 val uris = intent.parcelableArrayList<Uri>(Intent.EXTRA_STREAM)
                 val mimeTypes = intent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)
@@ -157,9 +164,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                     toJson(uri, text, mimeTypes?.getOrNull(i))
                 }?.let { JSONArray(it) }
             }
-
             Intent.ACTION_SENDTO -> {
-                // Handle mailto links
                 if (intent.scheme?.startsWith("mailto") == true) {
                     JSONArray(
                         listOf(JSONObject()
@@ -168,7 +173,6 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                     )
                 } else null
             }
-
             else -> null
         }
     }
@@ -191,12 +195,12 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
     }
 
     private fun resolvePath(uri: Uri): String? {
-        val direct = FileDirectory.getAbsolutePath(context, uri)
-        if (direct != null) {
-            if (direct.startsWith("/sdcard/") || direct.startsWith("/storage/emulated/"))
-                return copyFileToCache(direct)
-            return direct
-        }
+        // FIX: Removed FileDirectory dependency.
+        // If you have the FileDirectory.kt file, you can uncomment the lines below:
+        // val direct = FileDirectory.getAbsolutePath(context, uri)
+        // if (direct != null) return direct
+        
+        // Safe fallback: copy to temp file
         return copyUriToTempFile(uri)
     }
 
@@ -204,20 +208,34 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
         if (type != MediaType.VIDEO) return null to null
 
         val retriever = MediaMetadataRetriever()
-        retriever.setDataSource(path)
+        return try {
+            retriever.setDataSource(path)
+            val duration = retriever.extractMetadata(METADATA_KEY_DURATION)?.toLongOrNull()
+            
+            // FIX: API Level check for getScaledFrameAtTime
+            val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                retriever.getScaledFrameAtTime(-1, OPTION_CLOSEST_SYNC, 360, 360)
+            } else {
+                retriever.getFrameAtTime(-1, OPTION_CLOSEST_SYNC)
+            }
 
-        val duration = retriever.extractMetadata(METADATA_KEY_DURATION)?.toLongOrNull()
-        val bitmap = retriever.getScaledFrameAtTime(-1, OPTION_CLOSEST_SYNC, 360, 360)
-        retriever.release()
+            if (bitmap == null) return null to null
 
-        if (bitmap == null) return null to null
+            val file = File(context.cacheDir, "${File(path).name}.png")
+            FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
 
-        val file = File(context.cacheDir, "${File(path).name}.png")
-        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        bitmap.recycle()
-
-        return file.path to duration
+            file.path to duration
+        } catch (e: Exception) {
+            Log.e(TAG, "Video metadata error", e)
+            null to null
+        } finally {
+            retriever.release()
+        }
     }
+
+    // ... (rest of your helper methods copyFileToCache, copyUriToTempFile, getFileName, MediaType) ...
+    // I have included them below for completeness
 
     private fun copyFileToCache(path: String): String? =
         try {
@@ -282,11 +300,8 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
         binding.addOnNewIntentListener(this)
 
         binding.activity.intent?.let {
-            Log.d(TAG, "onAttachedToActivity: intent action=${it.action}, type=${it.type}, data=${it.data}")
             initialIntent = it
             handleIntent(it, true)
-        } ?: run {
-            Log.d(TAG, "onAttachedToActivity: no intent found")
         }
     }
 
@@ -298,6 +313,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
 
     override fun onDetachedFromActivity() {
         binding?.removeOnNewIntentListener(this)
+        binding = null
     }
 
     override fun onNewIntent(intent: Intent): Boolean {
